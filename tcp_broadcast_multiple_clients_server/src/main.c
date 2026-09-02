@@ -6,22 +6,20 @@
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <poll.h>
+
+#define MAX_CLIENTS 1024
 
 int main(int argc, char **argv)
 {
-	int max_fd;
 	// server file descriptor
 	int server_fd;
 	// create IPv4, TCP style byte stream, use the default protocol for this socket
 	server_fd = socket(AF_INET, SOCK_STREAM, 0);
-	max_fd = server_fd;
 	
-	// temp set
-	fd_set ready;
-	FD_ZERO(&ready);
-	// master set
-	fd_set master;
-	FD_ZERO(&master);
+	int fd_counter = 0;
+	
+	struct pollfd fd_array[MAX_CLIENTS];
 	
 	// create an address structure
 	struct sockaddr_in server_addr;
@@ -61,78 +59,47 @@ int main(int argc, char **argv)
 	
 	printf("server is listening  on port 8080\n");
 	
-	// Add server socket to the master set
-	FD_SET(server_fd, &master);
+	// using an array of pollfd
+	init_fd_array(&fd_array, MAX_CLIENTS);
+	fd_array[0].fd = server_fd;
+	fd_array[0].events = POLLIN;
+	fd_counter++;
 	
 	while(1)
 	{
-		// copy master
-		ready = master;
-		// monitor new activity
-		int sel  = select(max_fd + 1, &ready, NULL, NULL, NULL);
-		printf("select: %d\n", sel);
-		
-		printf("ready: \n");
-		for(int i = 0;  i <= max_fd; i++)
+		// detect an activity
+		int ready = poll(fd_array, fd_counter, -1);
+		if(ready == -1)
 		{
-			if(FD_ISSET(i, &ready))
-			{
-				printf("%d\n", i);
-			}
+			perror("poll");
+			
+			return 1;
 		}
 		
-		for(int fd = 0; fd <= max_fd; fd++)
+		for(int i = 0; i < fd_counter; i++)
 		{
-			if(FD_ISSET(fd, &ready))
+			if(fd_array[i].revents & POLLIN)
 			{
-				if(fd == server_fd)
+				if(fd_array[i] == server_fd)
 				{
 					int client_fd = accept(server_fd, NULL, NULL);
-					
-					FD_SET(client_fd, &master);
-					
-					if(client_fd > max_fd)
+					if(client_fd == -1)
 					{
-						max_fd = client_fd;
+						perror("accept");
+					}
+					else if(fd_counter < MAX_CLIENTS)
+					{
+						fd_array[fd_counter].fd = client_fd;
+						fd_array[fd_counter].events = POLLIN;
+						fd_array[fd_counter].revents = 0;
+						fd_counter++;
 					}
 					
-					printf("new connection: %d\n", client_fd);
-					printf("total: %d\n", max_fd);
-					printf("master: \n");
-					for(int i = 0;  i <= max_fd; i++)
-					{
-						if(FD_ISSET(i, &master))
-						{
-							printf("%d\n", i);
-						}
-					}
+					printf("new client: %d\n", client_fd);
 				}
 				else
 				{
-					char buffer[1024];
 					
-					int bytes_read = recv(fd, buffer,sizeof(buffer) - 1, 0);
-					if(bytes_read == 0)
-					{
-						close(fd);
-						FD_CLR(fd, &master);
-					}
-					else if(bytes_read > 0)
-					{
-						buffer[bytes_read] = '\0';
-						printf("client %d: %s", fd, buffer);
-						
-						for(int i = 0; i <= max_fd; i++)
-						{
-							if(FD_ISSET(i, &master) && i != server_fd && i != fd)
-							{
-								if(send(i, buffer, bytes_read, 0) == -1)
-								{
-									perror("send");
-								}
-							}
-						}
-					}
 				}
 			}
 		}
@@ -141,4 +108,21 @@ int main(int argc, char **argv)
 	close(server_fd);
 	
 	return 0;
+}
+
+void init_fd_array(struct pollfd* fd_array, int fd_length)
+{
+	if(fd_length < 0)
+	{
+		perror("fd_length");
+		
+		return;
+	}
+	
+	for(int i = 0; i < fd_length; i ++)
+	{
+		fd_array[i].fd = -1;
+		fd_array[i].events = POLLIN;
+		fd_array[i].revents = 0;
+	}
 }

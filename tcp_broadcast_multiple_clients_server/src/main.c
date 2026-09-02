@@ -9,6 +9,9 @@
 #include <poll.h>
 
 #define MAX_CLIENTS 1024
+#define MAX_BUFFER 1024
+
+void init_fd_array(struct pollfd* fd_array, int fd_length);
 
 int main(int argc, char **argv)
 {
@@ -60,7 +63,7 @@ int main(int argc, char **argv)
 	printf("server is listening  on port 8080\n");
 	
 	// using an array of pollfd
-	init_fd_array(&fd_array, MAX_CLIENTS);
+	init_fd_array(&fd_array[0], MAX_CLIENTS);
 	fd_array[0].fd = server_fd;
 	fd_array[0].events = POLLIN;
 	fd_counter++;
@@ -80,7 +83,7 @@ int main(int argc, char **argv)
 		{
 			if(fd_array[i].revents & POLLIN)
 			{
-				if(fd_array[i] == server_fd)
+				if(fd_array[i].fd == server_fd)
 				{
 					int client_fd = accept(server_fd, NULL, NULL);
 					if(client_fd == -1)
@@ -99,8 +102,59 @@ int main(int argc, char **argv)
 				}
 				else
 				{
+					char buffer[MAX_BUFFER];
 					
+					int bytes_read = recv(fd_array[i].fd, buffer, sizeof(buffer) - 1, 0);
+					if(bytes_read > 0)
+					{
+						buffer[bytes_read] = '\0';
+						printf("client %d: ", buffer);
+						
+						for(int k = 0; k < fd_counter; k++)
+						{
+							if(k != i && fd_array[k].fd != server_fd)
+							{
+								send(fd_array[k].fd, buffer, bytes_read, 0);
+							}
+						}
+					}
+					else if(bytes_read == 0)		
+					{
+						printf("client disconnected: %d\n", fd_array[i].fd);
+						
+						close(fd_array[i].fd);
+						
+						for(int j = i; j < fd_counter - 1; j++)
+						{
+							fd_array[j] = fd_array[j+1];
+						}
+						fd_counter--;
+					}
+					else if(bytes_read == -1)		
+					{
+						perror("recv");
+					}
 				}
+			}
+			else if(fd_array[i].revents & POLLHUP)		
+			{
+				printf("client disconnected: %d\n", fd_array[i].fd);
+				
+				close(fd_array[i].fd);
+				
+				for(int j = i; j < fd_counter - 1; j++)
+				{
+					fd_array[j] = fd_array[j+1];
+				}
+				fd_counter--;
+			}
+			else if(fd_array[i].revents & POLLERR)		
+			{
+				perror("poll");
+			}
+			else if(fd_array[i].revents & POLLNVAL)		
+			{
+				perror("poll");
 			}
 		}
 	}
